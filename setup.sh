@@ -225,36 +225,37 @@ setup_supabase_cli() {
   print_info "Setting up via Supabase CLI..."
   echo ""
 
-  # List organizations
+  # List organizations (parse table output, not JSON)
   print_info "Fetching your organizations..."
-  ORGS=$(supabase orgs list --output json 2>/dev/null || echo "[]")
+  echo ""
+  echo -e "${BOLD}Available Organizations:${NC}"
 
-  if [ "$ORGS" = "[]" ]; then
-    print_warning "No organizations found. Creating project in default org."
-    ORG_ID=""
-  else
-    echo ""
-    echo -e "${BOLD}Available Organizations:${NC}"
-    echo "$ORGS" | jq -r '.[] | "  \(.id): \(.name)"' 2>/dev/null || echo "  (Unable to parse orgs)"
-    echo ""
+  # Parse the table output - skip header lines, extract ID and NAME
+  supabase orgs list 2>/dev/null | grep -E "^\s+[a-z]" | while read line; do
+    ORG_ID_ITEM=$(echo "$line" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}')
+    ORG_NAME_ITEM=$(echo "$line" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
+    echo "  $ORG_ID_ITEM : $ORG_NAME_ITEM"
+  done
+  echo ""
 
-    CREATE_NEW_ORG=$(prompt_yes_no "Create a new organization?" "no")
+  CREATE_NEW_ORG=$(prompt_yes_no "Create a new organization?" "no")
 
-    if [ "$CREATE_NEW_ORG" = "yes" ]; then
-      ORG_NAME=$(prompt_input "Enter new organization name" "")
-      if [ -n "$ORG_NAME" ]; then
-        ORG_RESULT=$(supabase orgs create "$ORG_NAME" --output json 2>/dev/null || echo "{}")
-        ORG_ID=$(echo "$ORG_RESULT" | jq -r '.id // empty')
-        if [ -n "$ORG_ID" ]; then
-          print_success "Created organization: $ORG_NAME"
-        else
-          print_warning "Could not create org, using default"
-          ORG_ID=""
-        fi
+  if [ "$CREATE_NEW_ORG" = "yes" ]; then
+    ORG_NAME=$(prompt_input "Enter new organization name" "")
+    if [ -n "$ORG_NAME" ]; then
+      print_info "Creating organization '$ORG_NAME'..."
+      ORG_CREATE_OUTPUT=$(supabase orgs create "$ORG_NAME" 2>&1)
+      # Try to extract org ID from output
+      ORG_ID=$(echo "$ORG_CREATE_OUTPUT" | grep -oE "[a-z]{20}" | head -1)
+      if [ -n "$ORG_ID" ]; then
+        print_success "Created organization: $ORG_NAME ($ORG_ID)"
+      else
+        print_warning "Organization created but could not parse ID"
+        ORG_ID=$(prompt_input "Enter the new organization ID" "")
       fi
-    else
-      ORG_ID=$(prompt_input "Enter organization ID (from list above)" "")
     fi
+  else
+    ORG_ID=$(prompt_input "Enter organization ID (copy from list above)" "")
   fi
 
   # Generate database password
@@ -262,17 +263,19 @@ setup_supabase_cli() {
 
   # Create project
   echo ""
-  print_info "Creating Supabase project..."
+  print_info "Creating Supabase project '$PROJECT_NAME'..."
 
-  PROJECT_CREATE_CMD="supabase projects create \"$PROJECT_NAME\" --db-password \"$DB_PASSWORD\" --region us-east-1"
   if [ -n "$ORG_ID" ]; then
-    PROJECT_CREATE_CMD="$PROJECT_CREATE_CMD --org-id \"$ORG_ID\""
+    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 --org-id "$ORG_ID" 2>&1)
+  else
+    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 2>&1)
   fi
 
-  PROJECT_RESULT=$(eval "$PROJECT_CREATE_CMD --output json" 2>/dev/null || echo "{}")
-  SUPABASE_PROJECT_ID=$(echo "$PROJECT_RESULT" | jq -r '.id // empty')
+  # Try to extract project ref from output
+  SUPABASE_PROJECT_ID=$(echo "$PROJECT_OUTPUT" | grep -oE "[a-z]{20}" | head -1)
 
   if [ -z "$SUPABASE_PROJECT_ID" ]; then
+    echo "$PROJECT_OUTPUT"
     print_error "Failed to create Supabase project"
     print_info "Falling back to manual setup..."
     setup_supabase_manual
@@ -285,18 +288,17 @@ setup_supabase_cli() {
   print_info "Waiting for project to be ready (this may take 1-2 minutes)..."
   sleep 60
 
-  # Get project details
-  PROJECT_DETAILS=$(supabase projects show "$SUPABASE_PROJECT_ID" --output json 2>/dev/null || echo "{}")
-  SUPABASE_URL=$(echo "$PROJECT_DETAILS" | jq -r '.api.url // empty')
-  SUPABASE_ANON_KEY=$(echo "$PROJECT_DETAILS" | jq -r '.api.anon_key // empty')
-  SUPABASE_SERVICE_KEY=$(echo "$PROJECT_DETAILS" | jq -r '.api.service_key // empty')
+  # Construct URLs from project ID
+  SUPABASE_URL="https://${SUPABASE_PROJECT_ID}.supabase.co"
 
-  if [ -z "$SUPABASE_URL" ]; then
-    print_warning "Could not fetch project details automatically"
-    SUPABASE_URL=$(prompt_input "Enter Supabase URL" "")
-    SUPABASE_ANON_KEY=$(prompt_input "Enter Supabase Anon Key" "")
-    SUPABASE_SERVICE_KEY=$(prompt_input "Enter Supabase Service Role Key" "")
-  fi
+  # Get API keys - need to fetch from dashboard or prompt
+  print_info "Project URL: $SUPABASE_URL"
+  print_warning "API keys must be retrieved from the Supabase dashboard"
+  print_info "Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/settings/api${NC}"
+  echo ""
+
+  SUPABASE_ANON_KEY=$(prompt_input "Enter Supabase Anon Key (from dashboard)" "")
+  SUPABASE_SERVICE_KEY=$(prompt_input "Enter Supabase Service Role Key (from dashboard)" "")
 
   # Link project
   supabase link --project-ref "$SUPABASE_PROJECT_ID" 2>/dev/null || true
