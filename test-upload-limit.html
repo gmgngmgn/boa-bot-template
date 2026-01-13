@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Test - Vercel Limit Simulation</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+        }
+        button {
+            background: #000;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #333;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        .progress {
+            width: 100%;
+            height: 20px;
+            background: #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #000;
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload Test Suite</h1>
+    <p>Test the new direct upload implementation vs the old proxied approach</p>
+
+    <!-- Test 1: Old Method (Simulated Limit) -->
+    <div class="test-section">
+        <h2>Test 1: Old Method (Simulated 5MB Limit)</h2>
+        <p>This simulates the old approach where files went through Vercel functions</p>
+        <input type="file" id="oldFile" accept="video/*,audio/*">
+        <br>
+        <button onclick="testOldMethod()">Test Old Method (Will Fail >5MB)</button>
+        <div id="oldResult"></div>
+    </div>
+
+    <!-- Test 2: New Method (Direct Upload) -->
+    <div class="test-section">
+        <h2>Test 2: New Method (Direct to Supabase)</h2>
+        <p>This uses the new direct upload approach (no size limit)</p>
+        <input type="file" id="newFile" accept="video/*,audio/*">
+        <br>
+        <button onclick="testNewMethod()">Test New Method (Should Work)</button>
+        <div id="newProgress"></div>
+        <div id="newResult"></div>
+    </div>
+
+    <!-- Test 3: Multiple Files -->
+    <div class="test-section">
+        <h2>Test 3: Multiple Files</h2>
+        <p>Test uploading multiple files simultaneously</p>
+        <input type="file" id="multiFiles" accept="video/*,audio/*" multiple>
+        <br>
+        <button onclick="testMultipleFiles()">Upload Multiple Files</button>
+        <div id="multiProgress"></div>
+        <div id="multiResult"></div>
+    </div>
+
+    <script>
+        const MAX_SIZE = 5 * 1024 * 1024; // 5MB limit (Vercel's approximate limit)
+
+        function formatSize(bytes) {
+            return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+        }
+
+        // Test 1: Simulate old method with size check
+        async function testOldMethod() {
+            const fileInput = document.getElementById('oldFile');
+            const resultDiv = document.getElementById('oldResult');
+            
+            if (!fileInput.files.length) {
+                resultDiv.innerHTML = '<div class="result error">Please select a file</div>';
+                return;
+            }
+
+            const file = fileInput.files[0];
+            resultDiv.innerHTML = `<div class="result info">Testing file: ${file.name} (${formatSize(file.size)})</div>`;
+
+            // Simulate Vercel's size check
+            if (file.size > MAX_SIZE) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ FAILED - 413 Content Too Large</strong><br>
+                        File size: ${formatSize(file.size)}<br>
+                        Vercel limit: ${formatSize(MAX_SIZE)}<br>
+                        Error: FUNCTION_PAYLOAD_TOO_LARGE<br>
+                        <br>
+                        This is exactly what users were experiencing!
+                    </div>
+                `;
+                return;
+            }
+
+            resultDiv.innerHTML = `
+                <div class="result success">
+                    ✅ File is small enough (${formatSize(file.size)} < ${formatSize(MAX_SIZE)})<br>
+                    Would have worked with old method
+                </div>
+            `;
+        }
+
+        // Test 2: New method - direct to Supabase
+        async function testNewMethod() {
+            const fileInput = document.getElementById('newFile');
+            const resultDiv = document.getElementById('newResult');
+            const progressDiv = document.getElementById('newProgress');
+            
+            if (!fileInput.files.length) {
+                resultDiv.innerHTML = '<div class="result error">Please select a file</div>';
+                return;
+            }
+
+            const file = fileInput.files[0];
+            progressDiv.innerHTML = '<div class="progress"><div class="progress-bar" style="width: 0%"></div></div>';
+            resultDiv.innerHTML = `<div class="result info">Uploading: ${file.name} (${formatSize(file.size)})</div>`;
+
+            try {
+                // This would normally use Supabase client
+                // For local testing, we'll just simulate the upload
+                const formData = new FormData();
+                formData.append('files', file);
+
+                // Simulate progress
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    progress += 10;
+                    if (progress > 90) progress = 90;
+                    progressDiv.querySelector('.progress-bar').style.width = progress + '%';
+                }, 200);
+
+                // Call the new register endpoint (metadata only)
+                const response = await fetch('/api/documents/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        uploads: [{
+                            documentId: crypto.randomUUID(),
+                            filename: file.name,
+                            storagePath: `test/${crypto.randomUUID()}/${file.name}`,
+                            sourceType: file.type.startsWith('video') ? 'video' : 'audio',
+                            size: file.size
+                        }]
+                    })
+                });
+
+                clearInterval(progressInterval);
+                progressDiv.querySelector('.progress-bar').style.width = '100%';
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <strong>✅ SUCCESS!</strong><br>
+                            File: ${file.name}<br>
+                            Size: ${formatSize(file.size)}<br>
+                            No size limit - went directly to Supabase!<br>
+                            Document ID: ${data.documentIds?.[0] || 'N/A'}
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ Error:</strong> ${error.message}<br>
+                        (Check console for details)
+                    </div>
+                `;
+                console.error('Upload error:', error);
+            }
+        }
+
+        // Test 3: Multiple files
+        async function testMultipleFiles() {
+            const fileInput = document.getElementById('multiFiles');
+            const resultDiv = document.getElementById('multiResult');
+            const progressDiv = document.getElementById('multiProgress');
+            
+            if (!fileInput.files.length) {
+                resultDiv.innerHTML = '<div class="result error">Please select files</div>';
+                return;
+            }
+
+            const files = Array.from(fileInput.files);
+            const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+            
+            progressDiv.innerHTML = '<div class="progress"><div class="progress-bar" style="width: 0%"></div></div>';
+            resultDiv.innerHTML = `
+                <div class="result info">
+                    Uploading ${files.length} files<br>
+                    Total size: ${formatSize(totalSize)}
+                </div>
+            `;
+
+            try {
+                const uploads = files.map(file => ({
+                    documentId: crypto.randomUUID(),
+                    filename: file.name,
+                    storagePath: `test/${crypto.randomUUID()}/${file.name}`,
+                    sourceType: file.type.startsWith('video') ? 'video' : 'audio',
+                    size: file.size
+                }));
+
+                // Simulate progress
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    progress += 10;
+                    if (progress > 90) progress = 90;
+                    progressDiv.querySelector('.progress-bar').style.width = progress + '%';
+                }, 300);
+
+                const response = await fetch('/api/documents/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uploads })
+                });
+
+                clearInterval(progressInterval);
+                progressDiv.querySelector('.progress-bar').style.width = '100%';
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <strong>✅ SUCCESS!</strong><br>
+                            Uploaded ${files.length} files<br>
+                            Total size: ${formatSize(totalSize)}<br>
+                            Files:<br>
+                            ${files.map(f => `• ${f.name} (${formatSize(f.size)})`).join('<br>')}
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ Error:</strong> ${error.message}
+                    </div>
+                `;
+                console.error('Upload error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
+

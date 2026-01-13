@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Flow Test</title>
+    <style>
+        body { font-family: system-ui; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .test { border: 2px solid #e5e7eb; padding: 20px; margin: 20px 0; border-radius: 8px; }
+        .success { border-color: #10b981; background: #d1fae5; }
+        .error { border-color: #ef4444; background: #fee2e2; }
+        .info { border-color: #3b82f6; background: #dbeafe; }
+        button { background: #000; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; margin: 5px; }
+        button:hover { background: #333; }
+        pre { background: #f3f4f6; padding: 10px; border-radius: 4px; overflow-x: auto; }
+        .step { margin: 10px 0; padding: 10px; background: #fff; border-left: 4px solid #3b82f6; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Upload Implementation Test</h1>
+    <p>This page tests the new direct upload flow vs the old proxied approach</p>
+
+    <div class="test info">
+        <h2>📋 What This Tests</h2>
+        <div class="step">✅ Direct upload to Supabase Storage (bypasses Vercel)</div>
+        <div class="step">✅ Metadata-only API calls (tiny payload)</div>
+        <div class="step">✅ No file bytes through Vercel functions</div>
+        <div class="step">❌ Old method would fail with files >5MB</div>
+    </div>
+
+    <div class="test">
+        <h2>🎬 Test: Upload Flow Inspection</h2>
+        <p>Open DevTools Network tab, then click the button below:</p>
+        <button onclick="window.location.href='/dashboard/transcribe'">Go to Upload Page</button>
+        <br><br>
+        <p><strong>What to look for in Network tab:</strong></p>
+        <pre>
+✅ SHOULD SEE:
+   • supabase.co/storage/v1/object/documents/...
+     (Direct upload - file bytes go here)
+   
+   • /api/documents/register
+     (Metadata only - ~1KB JSON)
+   
+   • /api/documents/transcribe
+     (Start processing)
+
+❌ SHOULD NOT SEE:
+   • /api/documents/upload
+     (Old method - deprecated)
+        </pre>
+    </div>
+
+    <div class="test">
+        <h2>🔍 Test: API Endpoint Check</h2>
+        <button onclick="testRegisterEndpoint()">Test /api/documents/register</button>
+        <div id="registerResult"></div>
+    </div>
+
+    <div class="test">
+        <h2>📊 Test: Payload Size Comparison</h2>
+        <input type="file" id="testFile" accept="video/*,audio/*">
+        <button onclick="comparePayloads()">Compare Old vs New</button>
+        <div id="comparisonResult"></div>
+    </div>
+
+    <script>
+        async function testRegisterEndpoint() {
+            const resultDiv = document.getElementById('registerResult');
+            resultDiv.innerHTML = '<p>Testing...</p>';
+
+            try {
+                const testPayload = {
+                    uploads: [{
+                        documentId: crypto.randomUUID(),
+                        filename: 'test-video.mp4',
+                        storagePath: 'test/path/test-video.mp4',
+                        sourceType: 'video',
+                        size: 10485760 // 10MB
+                    }]
+                };
+
+                const payloadSize = new Blob([JSON.stringify(testPayload)]).size;
+
+                const response = await fetch('/api/documents/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testPayload)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <div style="color: #059669; margin-top: 10px;">
+                            <strong>✅ SUCCESS!</strong><br>
+                            Endpoint: /api/documents/register<br>
+                            Payload size: ${payloadSize} bytes (${(payloadSize/1024).toFixed(2)} KB)<br>
+                            Response: ${JSON.stringify(data, null, 2)}<br>
+                            <br>
+                            <strong>This is the new approach:</strong><br>
+                            • Only metadata sent to Vercel<br>
+                            • File bytes go directly to Supabase<br>
+                            • No 413 errors possible!
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div style="color: #dc2626; margin-top: 10px;">
+                        <strong>❌ Error:</strong> ${error.message}<br>
+                        Check console for details
+                    </div>
+                `;
+                console.error(error);
+            }
+        }
+
+        function comparePayloads() {
+            const fileInput = document.getElementById('testFile');
+            const resultDiv = document.getElementById('comparisonResult');
+
+            if (!fileInput.files.length) {
+                resultDiv.innerHTML = '<p style="color: #dc2626;">Please select a file first</p>';
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+            const metadataSize = new Blob([JSON.stringify({
+                documentId: 'uuid',
+                filename: file.name,
+                storagePath: 'path',
+                sourceType: 'video',
+                size: file.size
+            })]).size;
+
+            const vercelLimit = 5 * 1024 * 1024; // 5MB
+            const wouldFailOldMethod = file.size > vercelLimit;
+
+            resultDiv.innerHTML = `
+                <div style="margin-top: 15px;">
+                    <h3>File: ${file.name}</h3>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr style="background: #f3f4f6;">
+                            <th style="padding: 10px; text-align: left;">Method</th>
+                            <th style="padding: 10px; text-align: left;">Payload through Vercel</th>
+                            <th style="padding: 10px; text-align: left;">Result</th>
+                        </tr>
+                        <tr style="background: ${wouldFailOldMethod ? '#fee2e2' : '#d1fae5'};">
+                            <td style="padding: 10px;"><strong>Old Method</strong><br>(Proxied)</td>
+                            <td style="padding: 10px;">${fileSizeMB} MB<br>(entire file)</td>
+                            <td style="padding: 10px;">
+                                ${wouldFailOldMethod 
+                                    ? '❌ 413 Error<br>FUNCTION_PAYLOAD_TOO_LARGE' 
+                                    : '✅ Would work<br>(file < 5MB)'}
+                            </td>
+                        </tr>
+                        <tr style="background: #d1fae5;">
+                            <td style="padding: 10px;"><strong>New Method</strong><br>(Direct)</td>
+                            <td style="padding: 10px;">${(metadataSize/1024).toFixed(2)} KB<br>(metadata only)</td>
+                            <td style="padding: 10px;">✅ Always works<br>(no size limit)</td>
+                        </tr>
+                    </table>
+                    <div style="margin-top: 15px; padding: 15px; background: #dbeafe; border-radius: 6px;">
+                        <strong>💡 Key Insight:</strong><br>
+                        Old method: ${fileSizeMB} MB through Vercel → ${wouldFailOldMethod ? 'FAILS' : 'Works'}<br>
+                        New method: ${(metadataSize/1024).toFixed(2)} KB through Vercel → Always works!<br>
+                        <br>
+                        <strong>Payload reduction:</strong> ${((1 - metadataSize/file.size) * 100).toFixed(2)}%
+                    </div>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
