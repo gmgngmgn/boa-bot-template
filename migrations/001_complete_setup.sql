@@ -289,8 +289,74 @@ CREATE TRIGGER update_metadata_fields_updated_at
   EXECUTE FUNCTION public.update_updated_at_column();
 
 -- =====================================================
--- 12. CASCADE DELETE FOR UPLOADS
+-- 12. LINKS TABLE
 -- =====================================================
+CREATE TABLE IF NOT EXISTS public.links (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  description TEXT,
+  associated_document_ids UUID[] DEFAULT '{}',
+  embedding vector(1536),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_links_user_id ON public.links(user_id);
+CREATE INDEX IF NOT EXISTS idx_links_created_at ON public.links(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_links_embedding ON public.links USING hnsw (embedding vector_cosine_ops);
+
+ALTER TABLE public.links ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Service role full access to links" ON public.links FOR ALL USING (true);
+
+DROP TRIGGER IF EXISTS update_links_updated_at ON public.links;
+CREATE TRIGGER update_links_updated_at
+  BEFORE UPDATE ON public.links
+  FOR EACH ROW
+  EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Search function for links
+CREATE OR REPLACE FUNCTION public.search_links(
+  query_embedding vector(1536),
+  match_threshold float DEFAULT 0.7,
+  match_count int DEFAULT 10,
+  filter_user_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+  id uuid,
+  name text,
+  url text,
+  description text,
+  associated_document_ids uuid[],
+  similarity float
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    links.id,
+    links.name,
+    links.url,
+    links.description,
+    links.associated_document_ids,
+    1 - (links.embedding <=> query_embedding) as similarity
+  FROM public.links
+  WHERE
+    (filter_user_id IS NULL OR links.user_id = filter_user_id)
+    AND links.embedding IS NOT NULL
+    AND 1 - (links.embedding <=> query_embedding) > match_threshold
+  ORDER BY links.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
+
+-- =====================================================
+-- 13. CASCADE DELETE FOR UPLOADS (Optimized)
+-- =====================================================
+-- Uses tracked vector_ids only, no slow metadata scans
 CREATE OR REPLACE FUNCTION public.delete_upload_vectors()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -306,8 +372,8 @@ BEGIN
     END IF;
   END LOOP;
 
-  DELETE FROM public.documents WHERE metadata->>'upload_id' = OLD.id::text;
-  DELETE FROM public.student_documents WHERE metadata->>'upload_id' = OLD.id::text;
+  -- Note: Removed slow metadata-based delete queries that caused timeouts
+  -- The upload_vectors table tracks all vector IDs for proper cleanup
 
   RETURN OLD;
 END;
@@ -320,11 +386,62 @@ CREATE TRIGGER trigger_delete_upload_vectors
   EXECUTE FUNCTION public.delete_upload_vectors();
 
 -- =====================================================
--- 13. STORAGE BUCKET
+-- 14. DELETE_UPLOAD_COMPLETE RPC FUNCTION
+-- =====================================================
+-- Single RPC call to delete upload and all associated data
+CREATE OR REPLACE FUNCTION public.delete_upload_complete(p_upload_id UUID)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_source_url TEXT;
+  v_tracking RECORD;
+  v_deleted_vectors INT := 0;
+BEGIN
+  -- Get source_url from uploads for storage cleanup later
+  SELECT source_url INTO v_source_url FROM uploads WHERE id = p_upload_id;
+
+  -- Get tracking record
+  SELECT * INTO v_tracking FROM upload_vectors WHERE upload_id = p_upload_id;
+
+  -- Delete vectors if tracking exists
+  IF v_tracking.id IS NOT NULL AND v_tracking.vector_ids IS NOT NULL THEN
+    IF v_tracking.target_table = 'student_documents' THEN
+      DELETE FROM student_documents WHERE id = ANY(v_tracking.vector_ids);
+    ELSE
+      DELETE FROM documents WHERE id = ANY(v_tracking.vector_ids);
+    END IF;
+    GET DIAGNOSTICS v_deleted_vectors = ROW_COUNT;
+
+    -- Delete tracking record
+    DELETE FROM upload_vectors WHERE id = v_tracking.id;
+  END IF;
+
+  -- Delete the upload record
+  DELETE FROM uploads WHERE id = p_upload_id;
+
+  RETURN json_build_object(
+    'success', true,
+    'deleted_vectors', v_deleted_vectors,
+    'source_url', v_source_url
+  );
+END;
+$$;
+
+-- =====================================================
+-- 15. STORAGE BUCKET
 -- =====================================================
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('documents', 'documents', false)
 ON CONFLICT (id) DO NOTHING;
+
+-- =====================================================
+-- 16. ENABLE REALTIME
+-- =====================================================
+-- Enable realtime updates for uploads and links tables
+ALTER PUBLICATION supabase_realtime ADD TABLE public.uploads;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.links;
 
 -- =====================================================
 -- SETUP COMPLETE
