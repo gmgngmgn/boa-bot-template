@@ -304,7 +304,21 @@ setup_supabase_cli() {
   SUPABASE_ANON_KEY=$(prompt_input "Enter Supabase Anon Key (from dashboard)" "")
   SUPABASE_SERVICE_KEY=$(prompt_input "Enter Supabase Service Role Key (from dashboard)" "")
 
-  # Link project (pass password for db execute)
+  # Initialize Supabase project structure if not exists
+  if [ ! -f "supabase/config.toml" ]; then
+    print_info "Initializing Supabase project structure..."
+    supabase init 2>/dev/null || true
+  fi
+
+  # Copy migration to supabase/migrations with timestamp prefix
+  if [ -f "migrations/001_complete_setup.sql" ]; then
+    mkdir -p supabase/migrations
+    TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+    cp migrations/001_complete_setup.sql "supabase/migrations/${TIMESTAMP}_complete_setup.sql"
+    print_success "Migration file prepared"
+  fi
+
+  # Link project (pass password for db push)
   print_info "Linking Supabase project..."
   if supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$DB_PASSWORD" 2>&1; then
     print_success "Project linked"
@@ -312,7 +326,7 @@ setup_supabase_cli() {
     print_warning "Could not link project automatically"
   fi
 
-  # Run migrations
+  # Run migrations with db push
   run_migrations_cli
 
   # Deploy edge functions
@@ -346,41 +360,43 @@ setup_supabase_manual() {
 run_migrations_cli() {
   print_info "Running database migrations..."
 
-  if [ -f "migrations/001_complete_setup.sql" ]; then
-    # Create supabase/migrations directory if it doesn't exist
-    mkdir -p supabase/migrations
-
-    # Copy migration with timestamp prefix for supabase db push
-    TIMESTAMP=$(date +%Y%m%d%H%M%S)
-    cp migrations/001_complete_setup.sql "supabase/migrations/${TIMESTAMP}_complete_setup.sql"
-
+  # Check if migration exists in supabase/migrations
+  if ls supabase/migrations/*.sql 1>/dev/null 2>&1; then
     # Use db push which is available in all CLI versions
     print_info "Pushing migrations to database..."
-    if supabase db push 2>&1 | tee /tmp/supabase_migration.log | grep -q "Applied"; then
+
+    # Capture full output
+    PUSH_OUTPUT=$(supabase db push 2>&1) || true
+    echo "$PUSH_OUTPUT"
+
+    # Check result
+    if echo "$PUSH_OUTPUT" | grep -qE "(Applied|Finished|applied|finished)"; then
       print_success "Migrations applied successfully"
-    elif grep -q "already exists" /tmp/supabase_migration.log; then
+    elif echo "$PUSH_OUTPUT" | grep -q "already exists"; then
       print_success "Migrations already applied"
+    elif echo "$PUSH_OUTPUT" | grep -qE "(ERROR|error:|FATAL|failed)"; then
+      print_warning "CLI migration failed"
+      echo ""
+      print_info "Please run migrations manually:"
+      echo -e "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
+      echo -e "  2. Open file: ${CYAN}$(pwd)/migrations/001_complete_setup.sql${NC}"
+      echo -e "  3. Copy all contents, paste in SQL Editor, and click Run"
+      echo ""
+      MANUAL_MIGRATION=$(prompt_yes_no "Have you run the migrations manually?" "no")
     else
-      # Check if it actually failed or just had warnings
-      if grep -qE "(ERROR|error:|failed)" /tmp/supabase_migration.log; then
-        print_warning "CLI migration may have failed"
-        cat /tmp/supabase_migration.log
+      # If output is empty or unclear, also show manual instructions
+      if [ -z "$PUSH_OUTPUT" ]; then
+        print_warning "No output from db push - migration may not have run"
         echo ""
-        print_info "Please run migrations manually:"
-        echo -e "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
-        echo -e "  2. Open file: ${CYAN}$(pwd)/migrations/001_complete_setup.sql${NC}"
-        echo -e "  3. Copy all contents, paste in SQL Editor, and click Run"
-        echo ""
-        MANUAL_MIGRATION=$(prompt_yes_no "Have you run the migrations manually?" "no")
+        print_info "Please verify tables exist or run migrations manually:"
+        echo -e "  Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
       else
-        print_success "Migrations pushed"
+        print_success "Migration command completed"
       fi
     fi
-
-    # Clean up temp file
-    rm -f /tmp/supabase_migration.log
   else
-    print_warning "Migration file not found"
+    print_warning "No migration files found in supabase/migrations/"
+    print_info "Please run migrations manually from: $(pwd)/migrations/001_complete_setup.sql"
   fi
 }
 
