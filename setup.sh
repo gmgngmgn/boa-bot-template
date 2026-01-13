@@ -347,19 +347,38 @@ run_migrations_cli() {
   print_info "Running database migrations..."
 
   if [ -f "migrations/001_complete_setup.sql" ]; then
-    # Use db execute with stdin redirection (not --file flag)
-    if cat migrations/001_complete_setup.sql | supabase db execute 2>&1; then
+    # Create supabase/migrations directory if it doesn't exist
+    mkdir -p supabase/migrations
+
+    # Copy migration with timestamp prefix for supabase db push
+    TIMESTAMP=$(date +%Y%m%d%H%M%S)
+    cp migrations/001_complete_setup.sql "supabase/migrations/${TIMESTAMP}_complete_setup.sql"
+
+    # Use db push which is available in all CLI versions
+    print_info "Pushing migrations to database..."
+    if supabase db push 2>&1 | tee /tmp/supabase_migration.log | grep -q "Applied"; then
       print_success "Migrations applied successfully"
+    elif grep -q "already exists" /tmp/supabase_migration.log; then
+      print_success "Migrations already applied"
     else
-      print_warning "CLI migration failed"
-      echo ""
-      print_info "Please run migrations manually:"
-      echo -e "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
-      echo -e "  2. Open file: ${CYAN}$(pwd)/migrations/001_complete_setup.sql${NC}"
-      echo -e "  3. Copy all contents, paste in SQL Editor, and click Run"
-      echo ""
-      MANUAL_MIGRATION=$(prompt_yes_no "Press Enter when done, or skip for now?" "yes")
+      # Check if it actually failed or just had warnings
+      if grep -qE "(ERROR|error:|failed)" /tmp/supabase_migration.log; then
+        print_warning "CLI migration may have failed"
+        cat /tmp/supabase_migration.log
+        echo ""
+        print_info "Please run migrations manually:"
+        echo -e "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
+        echo -e "  2. Open file: ${CYAN}$(pwd)/migrations/001_complete_setup.sql${NC}"
+        echo -e "  3. Copy all contents, paste in SQL Editor, and click Run"
+        echo ""
+        MANUAL_MIGRATION=$(prompt_yes_no "Have you run the migrations manually?" "no")
+      else
+        print_success "Migrations pushed"
+      fi
     fi
+
+    # Clean up temp file
+    rm -f /tmp/supabase_migration.log
   else
     print_warning "Migration file not found"
   fi
