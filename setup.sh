@@ -398,29 +398,52 @@ deploy_edge_functions_cli() {
 setup_trigger_dev() {
   print_header "Trigger.dev Setup"
 
-  print_info "Initializing Trigger.dev..."
-  print_info "A browser window will open for authentication"
+  print_info "Each project needs its own Trigger.dev project"
+  print_info "The background tasks use your Supabase credentials"
   echo ""
 
-  # Run trigger.dev init
-  npx trigger.dev@latest init 2>/dev/null || {
-    print_warning "Trigger.dev init may require manual setup"
-  }
+  # Check if user wants to set up Trigger.dev now
+  SETUP_TRIGGER=$(prompt_yes_no "Set up Trigger.dev now?" "yes")
 
-  # Check if trigger.config.ts was updated
-  if [ -f "trigger.config.ts" ]; then
-    TRIGGER_PROJECT_ID=$(grep -o 'project: "[^"]*"' trigger.config.ts | cut -d'"' -f2)
-    if [ -n "$TRIGGER_PROJECT_ID" ]; then
-      print_success "Trigger.dev project linked: $TRIGGER_PROJECT_ID"
-    fi
+  if [ "$SETUP_TRIGGER" = "no" ]; then
+    print_warning "Skipping Trigger.dev setup"
+    print_info "You'll need to manually update trigger.config.ts with your project ID"
+    return
   fi
 
-  # Prompt for secret key if not captured
   echo ""
-  print_info "Enter your Trigger.dev secret key"
-  print_info "Find it at: ${CYAN}https://cloud.trigger.dev${NC} → Project Settings → API Keys"
+  print_info "Please create a new project at: ${CYAN}https://cloud.trigger.dev${NC}"
+  print_info "Steps:"
+  echo "  1. Sign in to Trigger.dev"
+  echo "  2. Click 'New Project'"
+  echo "  3. Name it (e.g., '$PROJECT_NAME')"
+  echo "  4. Copy the Project ID (looks like: proj_xxxxxxxxxxxx)"
+  echo ""
+
+  TRIGGER_PROJECT_ID=$(prompt_input "Enter your new Trigger.dev Project ID (proj_...)" "")
+
+  if [ -n "$TRIGGER_PROJECT_ID" ]; then
+    # Update trigger.config.ts with new project ID
+    if [ -f "trigger.config.ts" ]; then
+      sed -i.bak "s/project: \"[^\"]*\"/project: \"$TRIGGER_PROJECT_ID\"/" trigger.config.ts
+      rm -f trigger.config.ts.bak
+      print_success "Updated trigger.config.ts with project: $TRIGGER_PROJECT_ID"
+    fi
+  else
+    print_warning "No project ID provided - trigger.config.ts not updated"
+  fi
+
+  echo ""
+  print_info "Now get your secret key from: ${CYAN}https://cloud.trigger.dev${NC}"
+  print_info "Go to: Project Settings → API Keys"
   echo ""
   TRIGGER_SECRET_KEY=$(prompt_input "Trigger.dev Secret Key (tr_dev_...)" "")
+
+  if [ -n "$TRIGGER_SECRET_KEY" ]; then
+    print_success "Trigger.dev configured"
+  else
+    print_warning "No secret key provided - add it to .env.local later"
+  fi
 }
 
 # =====================================================
