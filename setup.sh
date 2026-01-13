@@ -165,8 +165,8 @@ configure_project() {
   if [ -f "$SIDEBAR_FILE" ]; then
     # Update display name
     sed -i.bak "s/Elite Ecommerce/$DISPLAY_NAME/g" "$SIDEBAR_FILE"
-    # Update initials
-    sed -i.bak "s/>EE</>$INITIALS</g" "$SIDEBAR_FILE"
+    # Update initials (EE appears with whitespace around it, use extended regex)
+    sed -i.bak -E "s/([[:space:]])EE([[:space:]])/\1$INITIALS\2/g" "$SIDEBAR_FILE"
     rm -f "$SIDEBAR_FILE.bak"
     print_success "Updated sidebar branding"
   fi
@@ -331,6 +331,9 @@ setup_supabase_cli() {
 
   # Deploy edge functions
   deploy_edge_functions_cli
+
+  # Update MCP configuration with new project ID
+  update_mcp_config
 }
 
 setup_supabase_manual() {
@@ -348,13 +351,29 @@ setup_supabase_manual() {
     exit 1
   fi
 
+  # Extract project ID from URL for MCP config
+  SUPABASE_PROJECT_ID=$(echo "$SUPABASE_URL" | sed -E 's|https://([^.]+)\.supabase\.co.*|\1|')
+
   print_success "Supabase credentials saved"
 
   # Run migrations via API
   run_migrations_api
 
+  # Update MCP configuration
+  update_mcp_config
+
   print_warning "Edge functions must be deployed manually or via Supabase CLI"
   print_info "See supabase/functions/ for edge function source code"
+}
+
+update_mcp_config() {
+  if [ -f ".mcp.json" ] && [ -n "$SUPABASE_PROJECT_ID" ]; then
+    print_info "Updating MCP configuration..."
+    # Replace the old project_ref with the new one
+    sed -i.bak "s/project_ref=[a-z]*&/project_ref=${SUPABASE_PROJECT_ID}\&/" .mcp.json
+    rm -f .mcp.json.bak
+    print_success "Updated .mcp.json with project: $SUPABASE_PROJECT_ID"
+  fi
 }
 
 run_migrations_cli() {
