@@ -283,6 +283,10 @@ setup_supabase_cli() {
   fi
 
   print_success "Created Supabase project: $SUPABASE_PROJECT_ID"
+  echo ""
+  echo -e "${BOLD}Database Password:${NC} ${CYAN}$DB_PASSWORD${NC}"
+  echo -e "${YELLOW}⚠ SAVE THIS PASSWORD - you'll need it for direct database connections${NC}"
+  echo ""
 
   # Wait for project to be ready
   print_info "Waiting for project to be ready (this may take 1-2 minutes)..."
@@ -466,6 +470,7 @@ create_env_file() {
 NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL:-https://your-project.supabase.co}
 NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-anon-key}
 SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_KEY:-your-service-role-key}
+SUPABASE_DB_PASSWORD=${DB_PASSWORD:-}
 
 # AI Services
 ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-your-assemblyai-key}
