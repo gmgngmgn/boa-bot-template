@@ -347,16 +347,16 @@ run_migrations_cli() {
   print_info "Running database migrations..."
 
   if [ -f "migrations/001_complete_setup.sql" ]; then
-    # Use db execute to run SQL file directly (not db push which requires migrations folder)
-    if supabase db execute --file migrations/001_complete_setup.sql 2>&1; then
+    # Use db execute with stdin redirection (not --file flag)
+    if cat migrations/001_complete_setup.sql | supabase db execute 2>&1; then
       print_success "Migrations applied successfully"
     else
       print_warning "CLI migration failed"
       echo ""
       print_info "Please run migrations manually:"
-      echo "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
-      echo "  2. Copy contents of: ${CYAN}migrations/001_complete_setup.sql${NC}"
-      echo "  3. Paste and run in the SQL Editor"
+      echo -e "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
+      echo -e "  2. Open file: ${CYAN}$(pwd)/migrations/001_complete_setup.sql${NC}"
+      echo -e "  3. Copy all contents, paste in SQL Editor, and click Run"
       echo ""
       MANUAL_MIGRATION=$(prompt_yes_no "Press Enter when done, or skip for now?" "yes")
     fi
@@ -374,13 +374,9 @@ run_migrations_api() {
     PROJECT_ID=$(echo "$SUPABASE_URL" | sed -E 's|https://([^.]+)\.supabase\.co.*|\1|')
 
     print_info "Please run migrations in the Supabase SQL Editor:"
-    echo "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${PROJECT_ID}/sql${NC}"
-    echo "  2. Copy the contents of: ${CYAN}migrations/001_complete_setup.sql${NC}"
-    echo "  3. Paste and click 'Run'"
-    echo ""
-
-    # Offer to show file path
-    print_info "Migration file location: $(pwd)/migrations/001_complete_setup.sql"
+    echo -e "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${PROJECT_ID}/sql${NC}"
+    echo -e "  2. Open file: ${CYAN}$(pwd)/migrations/001_complete_setup.sql${NC}"
+    echo -e "  3. Copy all contents, paste in SQL Editor, and click Run"
     echo ""
 
     MANUAL_DONE=$(prompt_yes_no "Have you run the migrations?" "yes")
