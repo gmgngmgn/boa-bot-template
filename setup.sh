@@ -41,11 +41,11 @@ prompt_input() {
   local result
 
   if [ -n "$default" ]; then
-    echo -en "${BOLD}$prompt${NC} (default: ${CYAN}$default${NC}): "
+    echo -en "${BOLD}$prompt${NC} (default: ${CYAN}$default${NC}): " > /dev/tty
   else
-    echo -en "${BOLD}$prompt${NC}: "
+    echo -en "${BOLD}$prompt${NC}: " > /dev/tty
   fi
-  read result
+  read result < /dev/tty
 
   if [ -z "$result" ] && [ -n "$default" ]; then
     result="$default"
@@ -60,8 +60,8 @@ prompt_yes_no() {
   local result
 
   while true; do
-    echo -en "${BOLD}$prompt${NC} (y/n): "
-    read result
+    echo -en "${BOLD}$prompt${NC} (y/n): " > /dev/tty
+    read result < /dev/tty
     case "$result" in
       [Yy]* ) echo "yes"; return;;
       [Nn]* ) echo "no"; return;;
