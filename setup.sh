@@ -304,8 +304,13 @@ setup_supabase_cli() {
   SUPABASE_ANON_KEY=$(prompt_input "Enter Supabase Anon Key (from dashboard)" "")
   SUPABASE_SERVICE_KEY=$(prompt_input "Enter Supabase Service Role Key (from dashboard)" "")
 
-  # Link project
-  supabase link --project-ref "$SUPABASE_PROJECT_ID" 2>/dev/null || true
+  # Link project (pass password for db execute)
+  print_info "Linking Supabase project..."
+  if supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$DB_PASSWORD" 2>&1; then
+    print_success "Project linked"
+  else
+    print_warning "Could not link project automatically"
+  fi
 
   # Run migrations
   run_migrations_cli
@@ -342,35 +347,51 @@ run_migrations_cli() {
   print_info "Running database migrations..."
 
   if [ -f "migrations/001_complete_setup.sql" ]; then
-    supabase db push 2>/dev/null || {
-      print_warning "CLI migration failed, trying API..."
-      run_migrations_api
-    }
-    print_success "Migrations applied"
+    # Use db execute to run SQL file directly (not db push which requires migrations folder)
+    if supabase db execute --file migrations/001_complete_setup.sql 2>&1; then
+      print_success "Migrations applied successfully"
+    else
+      print_warning "CLI migration failed"
+      echo ""
+      print_info "Please run migrations manually:"
+      echo "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${SUPABASE_PROJECT_ID}/sql${NC}"
+      echo "  2. Copy contents of: ${CYAN}migrations/001_complete_setup.sql${NC}"
+      echo "  3. Paste and run in the SQL Editor"
+      echo ""
+      MANUAL_MIGRATION=$(prompt_yes_no "Press Enter when done, or skip for now?" "yes")
+    fi
   else
     print_warning "Migration file not found"
   fi
 }
 
 run_migrations_api() {
-  print_info "Applying migrations via API..."
+  print_info "Database migrations need to be run manually..."
+  echo ""
 
   if [ -f "migrations/001_complete_setup.sql" ]; then
-    MIGRATION_SQL=$(cat migrations/001_complete_setup.sql)
+    # Extract project ID from URL
+    PROJECT_ID=$(echo "$SUPABASE_URL" | sed -E 's|https://([^.]+)\.supabase\.co.*|\1|')
 
-    # Execute via Supabase REST API
-    curl -s -X POST \
-      "${SUPABASE_URL}/rest/v1/rpc/exec_sql" \
-      -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-      -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-      -H "Content-Type: application/json" \
-      -d "{\"query\": $(echo "$MIGRATION_SQL" | jq -Rs .)}" \
-      >/dev/null 2>&1 || {
-        print_warning "API migration may have partially failed"
-        print_info "You may need to run migrations manually in Supabase SQL Editor"
-      }
+    print_info "Please run migrations in the Supabase SQL Editor:"
+    echo "  1. Go to: ${CYAN}https://supabase.com/dashboard/project/${PROJECT_ID}/sql${NC}"
+    echo "  2. Copy the contents of: ${CYAN}migrations/001_complete_setup.sql${NC}"
+    echo "  3. Paste and click 'Run'"
+    echo ""
 
-    print_success "Migrations applied via API"
+    # Offer to show file path
+    print_info "Migration file location: $(pwd)/migrations/001_complete_setup.sql"
+    echo ""
+
+    MANUAL_DONE=$(prompt_yes_no "Have you run the migrations?" "yes")
+
+    if [ "$MANUAL_DONE" = "yes" ]; then
+      print_success "Migrations marked as complete"
+    else
+      print_warning "Remember to run migrations before using the app"
+    fi
+  else
+    print_warning "Migration file not found"
   fi
 }
 
