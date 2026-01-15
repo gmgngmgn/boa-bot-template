@@ -8,6 +8,7 @@ import { DocumentUpload } from '@/components/dashboard/DocumentUpload';
 import { YouTubeUpload } from '@/components/dashboard/YouTubeUpload';
 import { LinkUpload } from '@/components/dashboard/LinkUpload';
 import { TextUpload } from '@/components/dashboard/TextUpload';
+import { CSVUpload } from '@/components/dashboard/CSVUpload';
 
 export default function TranscribePage() {
   return (
@@ -20,7 +21,7 @@ export default function TranscribePage() {
         <Tabs defaultValue="video" className="w-full">
           <div className="border-b border-gray-100 px-6">
             <TabsList className="flex gap-8 bg-transparent p-0 h-12 w-auto justify-start shadow-none rounded-none border-none">
-              {['video', 'audio', 'documents', 'youtube', 'links', 'text'].map((tab) => (
+              {['video', 'audio', 'documents', 'youtube', 'links', 'text', 'csv'].map((tab) => (
                 <TabsTrigger 
                   key={tab}
                   value={tab}
@@ -74,6 +75,10 @@ export default function TranscribePage() {
 
             <TabsContent value="text" className="mt-0 focus-visible:outline-none">
               <TextUpload />
+            </TabsContent>
+
+            <TabsContent value="csv" className="mt-0 focus-visible:outline-none">
+              <CSVUpload />
             </TabsContent>
           </div>
         </Tabs>
