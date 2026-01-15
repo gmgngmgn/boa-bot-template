@@ -52,6 +52,27 @@ type DeleteDocumentPayload = {
   documentId: string;
 };
 
+type ProcessCSVBatchPayload = {
+  batchId: string;
+  userId: string;
+  rows: Array<{
+    documentName: string;
+    docUrl: string;
+    externalLink?: string;
+  }>;
+  targetTable: 'documents' | 'student_documents';
+};
+
+type ProcessCSVRowPayload = {
+  uploadId?: string;
+  userId: string;
+  documentName: string;
+  docUrl: string;
+  externalLink?: string;
+  targetTable: 'documents' | 'student_documents';
+  isRetry?: boolean;
+};
+
 // --- Tasks ---
 
 export const youtubeTranscript = task({
@@ -554,6 +575,223 @@ export const purgeOldDocuments = schedules.task({
     }
 
     return { deleted: toDelete.length };
+  },
+});
+
+// --- CSV Import Tasks ---
+
+function extractGoogleDocId(url: string): string | null {
+  // Handle various Google Doc URL formats:
+  // https://docs.google.com/document/d/DOC_ID/edit
+  // https://docs.google.com/document/d/DOC_ID/edit?usp=sharing
+  // https://docs.google.com/document/d/DOC_ID
+  const match = url.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+async function fetchGoogleDocContent(docUrl: string): Promise<string> {
+  const docId = extractGoogleDocId(docUrl);
+  if (!docId) {
+    throw new Error(`Invalid Google Doc URL: ${docUrl}`);
+  }
+
+  const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+
+  const response = await fetch(exportUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; DocumentBot/1.0)',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Google Doc not found. Make sure the document exists and is publicly accessible.');
+    }
+    if (response.status === 403) {
+      throw new Error('Access denied. Make sure the Google Doc has link sharing enabled.');
+    }
+    throw new Error(`Failed to fetch Google Doc: ${response.status} ${response.statusText}`);
+  }
+
+  const text = await response.text();
+
+  if (!text || text.trim().length === 0) {
+    throw new Error('Google Doc is empty');
+  }
+
+  return text;
+}
+
+export const processCSVBatch = task({
+  id: "process-csv-batch",
+  run: async (payload: ProcessCSVBatchPayload) => {
+    const { batchId, userId, rows, targetTable } = payload;
+
+    logger.info("Starting CSV batch processing", { batchId, rowCount: rows.length });
+
+    const results = {
+      total: rows.length,
+      successful: 0,
+      failed: 0,
+      errors: [] as string[],
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      try {
+        logger.info(`Processing row ${i + 1}/${rows.length}`, { documentName: row.documentName });
+
+        // Trigger child task and wait for completion
+        const result = await processCSVRow.triggerAndWait({
+          userId,
+          documentName: row.documentName,
+          docUrl: row.docUrl,
+          externalLink: row.externalLink,
+          targetTable,
+        });
+
+        if (result.ok) {
+          results.successful++;
+        } else {
+          results.failed++;
+          results.errors.push(`${row.documentName}: Task failed`);
+        }
+      } catch (err: any) {
+        results.failed++;
+        results.errors.push(`${row.documentName}: ${err?.message || 'Unknown error'}`);
+        logger.error("Row processing failed", { row, error: err });
+      }
+
+      // Small delay between rows to avoid rate limiting
+      if (i < rows.length - 1) {
+        await wait.for({ seconds: 1 });
+      }
+    }
+
+    logger.info("CSV batch processing complete", { batchId, results });
+
+    return results;
+  },
+});
+
+export const processCSVRow = task({
+  id: "process-csv-row",
+  run: async (payload: ProcessCSVRowPayload) => {
+    const { uploadId, userId, documentName, docUrl, externalLink, targetTable, isRetry } = payload;
+    const dbc = getSupabaseAdmin();
+
+    let docId = uploadId;
+
+    try {
+      // Create upload record if not a retry
+      if (!isRetry) {
+        docId = uuidv4();
+
+        const { error: insertErr } = await dbc.from("uploads").insert({
+          id: docId,
+          user_id: userId,
+          filename: documentName,
+          source_type: 'csv-import',
+          source_url: null,
+          status: 'processing',
+          metadata: {
+            progress: 5,
+            google_doc_url: docUrl,
+            external_link: externalLink || null,
+            target_table: targetTable,
+            source: 'csv-import',
+          },
+        });
+
+        if (insertErr) {
+          throw new Error(`Failed to create upload record: ${insertErr.message}`);
+        }
+      }
+
+      // Update progress
+      await dbc.from("uploads").update({
+        status: 'processing',
+        metadata: {
+          progress: 10,
+          google_doc_url: docUrl,
+          external_link: externalLink || null,
+          target_table: targetTable,
+          source: 'csv-import',
+        },
+        updated_at: new Date().toISOString(),
+      }).eq("id", docId);
+
+      // Fetch Google Doc content
+      logger.info("Fetching Google Doc content", { docUrl });
+      const content = await fetchGoogleDocContent(docUrl);
+
+      logger.info("Google Doc fetched", { contentLength: content.length });
+
+      // Update with transcript
+      await dbc.from("uploads").update({
+        transcript_text: content,
+        metadata: {
+          progress: 50,
+          google_doc_url: docUrl,
+          external_link: externalLink || null,
+          target_table: targetTable,
+          source: 'csv-import',
+        },
+        updated_at: new Date().toISOString(),
+      }).eq("id", docId);
+
+      // Now run ingestion
+      logger.info("Starting ingestion", { docId, targetTable });
+
+      const ingestResult = await ingestDocument.triggerAndWait({
+        userId,
+        documentId: docId!,
+        targetTable,
+        externalLink,
+      });
+
+      if (!ingestResult.ok) {
+        throw new Error('Ingestion task failed');
+      }
+
+      // Mark as completed
+      await dbc.from("uploads").update({
+        status: 'completed',
+        metadata: {
+          progress: 100,
+          google_doc_url: docUrl,
+          external_link: externalLink || null,
+          target_table: targetTable,
+          source: 'csv-import',
+          ingested: true,
+        },
+        updated_at: new Date().toISOString(),
+      }).eq("id", docId);
+
+      return { ok: true, documentId: docId, contentLength: content.length };
+
+    } catch (err: any) {
+      logger.error("CSV row processing failed", { documentName, error: err });
+
+      // Update with error status
+      if (docId) {
+        await dbc.from("uploads").update({
+          status: 'error',
+          metadata: {
+            progress: 0,
+            google_doc_url: docUrl,
+            external_link: externalLink || null,
+            target_table: targetTable,
+            source: 'csv-import',
+            error: String(err?.message || err),
+          },
+          updated_at: new Date().toISOString(),
+        }).eq("id", docId);
+      }
+
+      throw err;
+    }
   },
 });
 
