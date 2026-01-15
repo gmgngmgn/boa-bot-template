@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { CheckCircle2, XCircle, Loader2, MoreHorizontal, FileText, Link as LinkIcon, Search, DatabaseZap } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, MoreHorizontal, FileText, Link as LinkIcon, Search, DatabaseZap, RefreshCw } from 'lucide-react';
 import { SearchResults } from './SearchResults';
 import { IngestModal } from './IngestModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
@@ -209,6 +209,31 @@ export function DocumentsTable() {
   const handleDeleteSingleLink = (linkId: string) => {
     setItemsToDelete({ docIds: [], linkIds: [linkId] });
     setDeleteModalOpen(true);
+  };
+
+  const handleRetryCSVRow = async (uploadId: string) => {
+    try {
+      const response = await fetch('/api/documents/retry-csv-row', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uploadId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to retry');
+      }
+
+      toast.success('Retry started', {
+        description: 'Document is being reprocessed',
+      });
+
+      fetchDocuments();
+    } catch (error) {
+      toast.error('Retry failed', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
   };
 
   const performDelete = async () => {
@@ -457,7 +482,17 @@ export function DocumentsTable() {
                     </DropdownMenu>
                   ) : (
                     <>
-                      {item.metadata?.ingested ? (
+                      {item.status === 'error' && item.metadata?.google_doc_url ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs text-orange-600 border-orange-200 hover:bg-orange-50"
+                          onClick={() => handleRetryCSVRow(item.id)}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Retry
+                        </Button>
+                      ) : item.metadata?.ingested ? (
                         <Button
                           size="sm"
                           variant="outline"
