@@ -278,9 +278,9 @@ setup_supabase_cli() {
   print_info "Creating Supabase project '$PROJECT_NAME'..."
 
   if [ -n "$ORG_ID" ]; then
-    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 --org-id "$ORG_ID" < /dev/tty 2>&1)
+    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 --org-id "$ORG_ID" < /dev/tty 2>&1) || true
   else
-    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 < /dev/tty 2>&1)
+    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 < /dev/tty 2>&1) || true
   fi
 
   # Try to extract project ref from output
