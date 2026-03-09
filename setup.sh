@@ -3,6 +3,7 @@
 # This prevents child processes from consuming stdin when run via curl | bash.
 {
 set -e
+trap 'echo ""; echo "SCRIPT FAILED at line $LINENO (exit code $?)" >&2' ERR
 
 # =====================================================
 # Project Setup Script
