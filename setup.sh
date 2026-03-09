@@ -1,4 +1,7 @@
 #!/bin/bash
+# Wrap entire script in { } to ensure bash reads it fully before executing.
+# This prevents child processes from consuming stdin when run via curl | bash.
+{
 set -e
 
 # =====================================================
@@ -104,7 +107,7 @@ clone_repository() {
 
   print_info "Cloning from $REPO_URL..."
 
-  if ! git clone "$REPO_URL" "$TEMP_DIR" 2>/dev/null; then
+  if ! git clone "$REPO_URL" "$TEMP_DIR" < /dev/null 2>/dev/null; then
     print_error "Failed to clone repository"
     exit 1
   fi
@@ -189,7 +192,7 @@ install_dependencies() {
   fi
 
   print_info "Running npm install..."
-  npm install --silent
+  npm install --silent < /dev/null
 
   print_success "Dependencies installed"
 }
@@ -678,3 +681,4 @@ main() {
 
 # Run main
 main "$@"
+}
