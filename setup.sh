@@ -1,9 +1,17 @@
 #!/bin/bash
-# Wrap entire script in { } to ensure bash reads it fully before executing.
-# This prevents child processes from consuming stdin when run via curl | bash.
-{
+# Bootstrap: when piped (curl | bash), download to a temp file and re-execute.
+# This prevents child processes from consuming the pipe.
+if [ -z "$_SETUP_FROM_FILE" ]; then
+  export _SETUP_FROM_FILE=1
+  TMPFILE=$(mktemp /tmp/setup.XXXXXX.sh)
+  curl -fsSL "https://raw.githubusercontent.com/gmgngmgn/boa-bot-template/main/setup.sh" -o "$TMPFILE" < /dev/null
+  bash "$TMPFILE" < /dev/tty
+  CODE=$?
+  rm -f "$TMPFILE"
+  exit $CODE
+fi
+
 set -e
-trap 'echo ""; echo "SCRIPT FAILED at line $LINENO (exit code $?)" >&2' ERR
 
 # =====================================================
 # Project Setup Script
@@ -682,4 +690,3 @@ main() {
 
 # Run main
 main "$@"
-}
