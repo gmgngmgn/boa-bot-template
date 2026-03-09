@@ -116,7 +116,7 @@ clone_repository() {
 
   print_info "Cloning from $REPO_URL..."
 
-  if ! git clone "$REPO_URL" "$TEMP_DIR" < /dev/null 2>/dev/null; then
+  if ! git clone "$REPO_URL" "$TEMP_DIR" < /dev/tty 2>/dev/null; then
     print_error "Failed to clone repository"
     exit 1
   fi
@@ -216,7 +216,7 @@ setup_supabase() {
 
   # Check if Supabase CLI is available and logged in
   if check_command supabase; then
-    if supabase projects list < /dev/null &>/dev/null; then
+    if supabase projects list < /dev/tty &>/dev/null; then
       SUPABASE_CLI_AVAILABLE=true
       print_success "Supabase CLI detected and logged in"
     else
@@ -243,7 +243,7 @@ setup_supabase_cli() {
   echo -e "${BOLD}Available Organizations:${NC}"
 
   # Parse the table output - skip header lines, extract ID and NAME
-  supabase orgs list < /dev/null 2>/dev/null | grep -E "^\s+[a-z]" | while read line; do
+  supabase orgs list < /dev/tty 2>/dev/null | grep -E "^\s+[a-z]" | while read line; do
     ORG_ID_ITEM=$(echo "$line" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}')
     ORG_NAME_ITEM=$(echo "$line" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
     echo "  $ORG_ID_ITEM : $ORG_NAME_ITEM"
@@ -256,7 +256,7 @@ setup_supabase_cli() {
     ORG_NAME=$(prompt_input "Enter new organization name" "")
     if [ -n "$ORG_NAME" ]; then
       print_info "Creating organization '$ORG_NAME'..."
-      ORG_CREATE_OUTPUT=$(supabase orgs create "$ORG_NAME" < /dev/null 2>&1)
+      ORG_CREATE_OUTPUT=$(supabase orgs create "$ORG_NAME" < /dev/tty 2>&1)
       # Try to extract org ID from output
       ORG_ID=$(echo "$ORG_CREATE_OUTPUT" | grep -oE "[a-z]{20}" | head -1)
       if [ -n "$ORG_ID" ]; then
@@ -278,9 +278,9 @@ setup_supabase_cli() {
   print_info "Creating Supabase project '$PROJECT_NAME'..."
 
   if [ -n "$ORG_ID" ]; then
-    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 --org-id "$ORG_ID" < /dev/null 2>&1)
+    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 --org-id "$ORG_ID" < /dev/tty 2>&1)
   else
-    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 < /dev/null 2>&1)
+    PROJECT_OUTPUT=$(supabase projects create "$PROJECT_NAME" --db-password "$DB_PASSWORD" --region us-east-1 < /dev/tty 2>&1)
   fi
 
   # Try to extract project ref from output
@@ -319,7 +319,7 @@ setup_supabase_cli() {
   # Initialize Supabase project structure if not exists
   if [ ! -f "supabase/config.toml" ]; then
     print_info "Initializing Supabase project structure..."
-    supabase init < /dev/null 2>/dev/null || true
+    supabase init < /dev/tty 2>/dev/null || true
   fi
 
   # Copy migration to supabase/migrations with timestamp prefix
@@ -332,7 +332,7 @@ setup_supabase_cli() {
 
   # Link project (pass password for db push)
   print_info "Linking Supabase project..."
-  if supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$DB_PASSWORD" < /dev/null 2>&1; then
+  if supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$DB_PASSWORD" < /dev/tty 2>&1; then
     print_success "Project linked"
   else
     print_warning "Could not link project automatically"
@@ -397,7 +397,7 @@ run_migrations_cli() {
     print_info "Pushing migrations to database..."
 
     # Capture full output
-    PUSH_OUTPUT=$(supabase db push < /dev/null 2>&1) || true
+    PUSH_OUTPUT=$(supabase db push < /dev/tty 2>&1) || true
     echo "$PUSH_OUTPUT"
 
     # Check result
@@ -462,14 +462,14 @@ deploy_edge_functions_cli() {
 
   # Deploy hybrid_search_function
   if [ -d "supabase/functions/hybrid_search_function" ]; then
-    supabase functions deploy hybrid_search_function < /dev/null 2>/dev/null && \
+    supabase functions deploy hybrid_search_function < /dev/tty 2>/dev/null && \
       print_success "Deployed hybrid_search_function" || \
       print_warning "Failed to deploy hybrid_search_function"
   fi
 
   # Deploy student_hybrid_search_function
   if [ -d "supabase/functions/student_hybrid_search_function" ]; then
-    supabase functions deploy student_hybrid_search_function < /dev/null 2>/dev/null && \
+    supabase functions deploy student_hybrid_search_function < /dev/tty 2>/dev/null && \
       print_success "Deployed student_hybrid_search_function" || \
       print_warning "Failed to deploy student_hybrid_search_function"
   fi
@@ -553,7 +553,7 @@ configure_api_keys() {
     # Set OpenAI key in Supabase secrets if CLI available
     if [ -n "$OPENAI_API_KEY" ] && [ "$SUPABASE_CLI_AVAILABLE" = true ]; then
       print_info "Setting OpenAI key in Supabase edge function secrets..."
-      supabase secrets set OPENAI_API_KEY="$OPENAI_API_KEY" < /dev/null 2>/dev/null && \
+      supabase secrets set OPENAI_API_KEY="$OPENAI_API_KEY" < /dev/tty 2>/dev/null && \
         print_success "Supabase secrets configured" || \
         print_warning "Could not set Supabase secrets automatically"
     fi
