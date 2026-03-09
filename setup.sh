@@ -319,7 +319,7 @@ setup_supabase_cli() {
   # Initialize Supabase project structure if not exists
   if [ ! -f "supabase/config.toml" ]; then
     print_info "Initializing Supabase project structure..."
-    supabase init < /dev/tty 2>/dev/null || true
+    echo "n" | supabase init 2>/dev/null || true
   fi
 
   # Copy migration to supabase/migrations with timestamp prefix
